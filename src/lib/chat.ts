@@ -6,10 +6,16 @@ import { getTransactions } from './sheets'
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' })
 
-const SYSTEM_PROMPT = `You are a personal finance assistant in Brazil. Always respond with valid JSON matching this schema:
+function buildSystemPrompt(summary: string): string {
+  return `Você é o Nexo, um assistente financeiro pessoal inteligente, proativo e amigável.
+
+Você tem acesso ao resumo financeiro atual do usuário:
+${summary}
+
+Sempre responda com JSON válido seguindo este schema exato:
 {
   "type": "message" | "pending_transaction" | "chart",
-  "text": "string - message to display",
+  "text": "string",
   "transactionData": {
     "status": "Pago" | "Pendente" | "Para pagar",
     "type": "Entrada" | "Saída",
@@ -21,17 +27,14 @@ const SYSTEM_PROMPT = `You are a personal finance assistant in Brazil. Always re
   "chartData": [{ "name": "string", "value": number }]
 }
 
-Rules:
-- For questions/financial tips, return type "message".
-- For transaction requests (expense/income), return type "pending_transaction" with filled transactionData following these enum rules:
-  - status: "Pago" if the user already paid (e.g. "comprei", "recebi", "paguei"), "Pendente" or "Para pagar" for future bills.
-  - type: "Entrada" for income, "Saída" for expenses.
-  - category: ONLY use these exact values — "Alimentação", "Moradia", "Transporte", "Lazer", "Saúde", "Educação", "Outros".
-  - description: generate a short, contextual, formal financial phrase. Example: for "comprei uma coca", use "Compra de Coca-Cola" or "Gasto com refrigerante". Do NOT copy the user's raw words literally. Use null only if no description makes sense.
-  - recurring: "Sim" only if the user mentions "todo mês", "assinatura", "mensal", "recorrente". Default "Não".
-- For visual summary requests like "gráfico" or "resumo", return type "chart". The chartData will be replaced server-side with real data, so return an empty array or placeholder.
-- All monetary values must be numbers, not strings.
-- Respond in Brazilian Portuguese.`
+Regras:
+- Se o usuário fizer perguntas abertas, pedir conselhos, ou perguntar sobre o saldo, atue como um consultor humano. Responda de forma natural, analítica e humanizada usando type: "message". Não seja robótico.
+- Use type: "pending_transaction" APENAS quando o usuário expressar claramente a intenção de adicionar ou remover um valor.
+- Use type: "chart" APENAS quando pedir explicitamente um gráfico.
+- Para pending_transaction: status "Pago" se já pagou (ex: "comprei", "recebi", "paguei"), "Pendente" ou "Para pagar" para contas futuras. type "Entrada" para receita, "Saída" para despesas. category use APENAS os valores exatos — "Alimentação", "Moradia", "Transporte", "Lazer", "Saúde", "Educação", "Outros". description deve gerar uma frase formal contextual (ex: "comprei uma coca" vira "Compra de Coca-Cola"). recurring "Sim" só se mencionar "todo mês", "assinatura", "mensal". Default "Não".
+- Todos os valores monetários devem ser números, não strings.
+- Responda em português brasileiro.`
+}
 
 interface ChatInput {
   role: string
@@ -45,8 +48,52 @@ function cleanJsonResponse(raw: string): string {
     .trim()
 }
 
+function parseBrDate(dateStr: string): Date | null {
+  const parts = dateStr.split('/')
+  if (parts.length !== 3) return null
+  const [day, month, year] = parts.map(Number)
+  if (isNaN(day) || isNaN(month) || isNaN(year)) return null
+  return new Date(year, month - 1, day)
+}
+
 export async function chat(messages: ChatInput[]): Promise<AIResponse> {
   const lastMessage = messages[messages.length - 1]?.content || ''
+
+  const transactions = await getTransactions()
+
+  const now = new Date()
+  const currentMonth = now.getMonth()
+  const currentYear = now.getFullYear()
+
+  const monthTransactions = transactions.filter((t) => {
+    const date = parseBrDate(t.date)
+    if (!date) return false
+    return date.getMonth() === currentMonth && date.getFullYear() === currentYear
+  })
+
+  const totalIncome = monthTransactions
+    .filter((t) => t.type === 'Entrada')
+    .reduce((sum, t) => sum + t.value, 0)
+
+  const totalExpenses = monthTransactions
+    .filter((t) => t.type === 'Saída')
+    .reduce((sum, t) => sum + t.value, 0)
+
+  const balance = totalIncome - totalExpenses
+
+  const monthNames = [
+    'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+    'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+  ]
+
+  const summary = `Mês: ${monthNames[currentMonth]} de ${currentYear}
+Total de Entradas: R$ ${totalIncome.toFixed(2)}
+Total de Saídas: R$ ${totalExpenses.toFixed(2)}
+Saldo Atual: R$ ${balance.toFixed(2)}`
+
+  console.log('Resumo financeiro injetado:', summary)
+
+  const systemPrompt = buildSystemPrompt(summary)
 
   const historyStr = messages
     .slice(0, -1)
@@ -61,7 +108,7 @@ export async function chat(messages: ChatInput[]): Promise<AIResponse> {
     const interaction = await ai.interactions.create({
       model: 'gemini-3.5-flash',
       input: prompt,
-      system_instruction: SYSTEM_PROMPT,
+      system_instruction: systemPrompt,
     })
 
     const text = cleanJsonResponse(interaction.output_text || '')
@@ -70,7 +117,6 @@ export async function chat(messages: ChatInput[]): Promise<AIResponse> {
       const parsed = JSON.parse(text) as AIResponse
 
       if (parsed.type === 'chart') {
-        const transactions = await getTransactions()
         const expenses = transactions.filter((t) => t.type === 'Saída')
 
         const grouped = expenses.reduce<Record<string, number>>((acc, t) => {
