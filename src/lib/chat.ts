@@ -2,6 +2,7 @@
 
 import { GoogleGenAI } from '@google/genai'
 import type { AIResponse } from '@/types'
+import { getTransactions } from './sheets'
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' })
 
@@ -26,9 +27,9 @@ Rules:
   - status: "Pago" if the user already paid (e.g. "comprei", "recebi", "paguei"), "Pendente" or "Para pagar" for future bills.
   - type: "Entrada" for income, "Saída" for expenses.
   - category: ONLY use these exact values — "Alimentação", "Moradia", "Transporte", "Lazer", "Saúde", "Educação", "Outros".
-  - description: optional (null if not provided). Do NOT invent a description.
+  - description: generate a short, contextual, formal financial phrase. Example: for "comprei uma coca", use "Compra de Coca-Cola" or "Gasto com refrigerante". Do NOT copy the user's raw words literally. Use null only if no description makes sense.
   - recurring: "Sim" only if the user mentions "todo mês", "assinatura", "mensal", "recorrente". Default "Não".
-- For visual summary requests like "gráfico" or "resumo", return type "chart" with chartData array.
+- For visual summary requests like "gráfico" or "resumo", return type "chart". The chartData will be replaced server-side with real data, so return an empty array or placeholder.
 - All monetary values must be numbers, not strings.
 - Respond in Brazilian Portuguese.`
 
@@ -67,6 +68,22 @@ export async function chat(messages: ChatInput[]): Promise<AIResponse> {
 
     try {
       const parsed = JSON.parse(text) as AIResponse
+
+      if (parsed.type === 'chart') {
+        const transactions = await getTransactions()
+        const expenses = transactions.filter((t) => t.type === 'Saída')
+
+        const grouped = expenses.reduce<Record<string, number>>((acc, t) => {
+          acc[t.category] = (acc[t.category] || 0) + t.value
+          return acc
+        }, {})
+
+        parsed.chartData = Object.entries(grouped).map(([name, value]) => ({
+          name,
+          value,
+        }))
+      }
+
       return parsed
     } catch {
       return {
