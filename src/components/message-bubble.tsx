@@ -15,11 +15,12 @@ interface Message {
 
 interface Props {
   message: Message
+  saving?: boolean
   onConfirm?: (msg: Message) => void
   onCancel?: (msg: Message) => void
 }
 
-export function MessageBubble({ message, onConfirm, onCancel }: Props) {
+export function MessageBubble({ message, saving, onConfirm, onCancel }: Props) {
   if (message.role === 'user') {
     return (
       <div className="flex justify-end">
@@ -46,17 +47,20 @@ export function MessageBubble({ message, onConfirm, onCancel }: Props) {
                 <span className="text-zinc-500">Categoria</span>
                 <span className="text-zinc-300">{message.transactionData.category}</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-zinc-500">Descrição</span>
-                <span className="text-zinc-300">{message.transactionData.description}</span>
-              </div>
+              {message.transactionData.description && (
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500">Descrição</span>
+                  <span className="text-zinc-300">{message.transactionData.description}</span>
+                </div>
+              )}
             </div>
             <div className="flex gap-2">
               <button
                 onClick={() => onConfirm?.(message)}
-                className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs text-white hover:bg-zinc-700"
+                disabled={saving}
+                className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs text-white hover:bg-zinc-700 disabled:opacity-50"
               >
-                Confirmar
+                {saving ? 'Salvando...' : 'Confirmar'}
               </button>
               <button
                 onClick={() => onCancel?.(message)}

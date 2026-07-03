@@ -14,7 +14,7 @@ export interface AIResponse {
     action: 'add' | 'remove'
     value: number
     category: string
-    description: string
+    description?: string | null
   }
   chartData?: { name: string; value: number }[]
 }

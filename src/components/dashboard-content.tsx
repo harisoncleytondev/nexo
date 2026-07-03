@@ -6,6 +6,7 @@ import { MessageBubble } from './message-bubble'
 import { ChatInput } from './chat-input'
 import { LogoutButton } from './logout-button'
 import { chat } from '@/lib/chat'
+import { saveTransaction } from '@/lib/sheets'
 
 interface Message {
   id: string
@@ -27,6 +28,7 @@ export function DashboardContent() {
   ])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [isPending, startTransition] = useTransition()
+  const [savingId, setSavingId] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -38,31 +40,50 @@ export function DashboardContent() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const confirmTransaction = (msg: Message) => {
+  const confirmTransaction = async (msg: Message) => {
     if (!msg.transactionData) return
+    setSavingId(msg.id)
 
-    const transaction: Transaction = {
-      id: crypto.randomUUID(),
-      description: msg.transactionData.description,
-      amount: msg.transactionData.value,
-      type: msg.transactionData.action === 'add'
-        ? msg.transactionData.value >= 0 ? 'income' : 'expense'
-        : 'expense',
-      category: msg.transactionData.category,
-      date: new Date().toISOString(),
+    const result = await saveTransaction(msg.transactionData)
+
+    if (result.success) {
+      const transaction: Transaction = {
+        id: crypto.randomUUID(),
+        description: msg.transactionData.description || '',
+        amount: msg.transactionData.value,
+        type: msg.transactionData.value >= 0 ? 'income' : 'expense',
+        category: msg.transactionData.category,
+        date: new Date().toISOString(),
+      }
+
+      setTransactions((prev) => {
+        const updated = [transaction, ...prev]
+        localStorage.setItem('transactions', JSON.stringify(updated))
+        return updated
+      })
+
+      setMessages((prev) => [
+        ...prev.map((m) =>
+          m.id === msg.id ? { ...m, status: 'confirmed' as const } : m
+        ),
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: 'Transação salva na planilha com sucesso!',
+        },
+      ])
+    } else {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: result.error || 'Erro ao salvar transação.',
+        },
+      ])
     }
 
-    setTransactions((prev) => {
-      const updated = [transaction, ...prev]
-      localStorage.setItem('transactions', JSON.stringify(updated))
-      return updated
-    })
-
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === msg.id ? { ...m, status: 'confirmed' as const } : m
-      )
-    )
+    setSavingId(null)
   }
 
   const cancelTransaction = (msg: Message) => {
@@ -117,6 +138,7 @@ export function DashboardContent() {
             <MessageBubble
               key={msg.id}
               message={msg}
+              saving={savingId === msg.id}
               onConfirm={confirmTransaction}
               onCancel={cancelTransaction}
             />
