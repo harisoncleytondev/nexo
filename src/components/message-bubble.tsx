@@ -64,19 +64,13 @@ export function MessageBubble({ message, saving, onConfirm, onCancel }: Props) {
               </button>
               <button
                 onClick={() => onCancel?.(message)}
-                className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300"
+                disabled={saving}
+                className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 disabled:opacity-50"
               >
                 Cancelar
               </button>
             </div>
           </>
-        )}
-
-        {message.type === 'pending_transaction' && message.status === 'confirmed' && (
-          <p className="text-xs text-green-400">Transação confirmada.</p>
-        )}
-        {message.type === 'pending_transaction' && message.status === 'cancelled' && (
-          <p className="text-xs text-zinc-500">Transação cancelada.</p>
         )}
 
         {message.type === 'chart' && message.chartData && (

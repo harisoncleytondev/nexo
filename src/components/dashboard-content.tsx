@@ -87,11 +87,16 @@ export function DashboardContent() {
   }
 
   const cancelTransaction = (msg: Message) => {
-    setMessages((prev) =>
-      prev.map((m) =>
+    setMessages((prev) => [
+      ...prev.map((m) =>
         m.id === msg.id ? { ...m, status: 'cancelled' as const } : m
-      )
-    )
+      ),
+      {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: 'Ação cancelada.',
+      },
+    ])
   }
 
   const handleSend = (text: string) => {

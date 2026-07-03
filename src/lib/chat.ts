@@ -30,6 +30,13 @@ interface ChatInput {
   content: string
 }
 
+function cleanJsonResponse(raw: string): string {
+  return raw
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/g, '')
+    .trim()
+}
+
 export async function chat(messages: ChatInput[]): Promise<AIResponse> {
   const lastMessage = messages[messages.length - 1]?.content || ''
 
@@ -49,7 +56,7 @@ export async function chat(messages: ChatInput[]): Promise<AIResponse> {
       system_instruction: SYSTEM_PROMPT,
     })
 
-    const text = interaction.output_text || ''
+    const text = cleanJsonResponse(interaction.output_text || '')
 
     try {
       const parsed = JSON.parse(text) as AIResponse

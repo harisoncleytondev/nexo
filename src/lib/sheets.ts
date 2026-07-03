@@ -10,6 +10,8 @@ interface TransactionData {
 }
 
 export async function saveTransaction(data: TransactionData) {
+  console.log('Iniciando salvamento no Sheets...', data)
+
   const clientEmail = process.env.GOOGLE_CLIENT_EMAIL
   const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n')
 
@@ -30,10 +32,10 @@ export async function saveTransaction(data: TransactionData) {
 
     const type = data.action === 'add' && data.value >= 0 ? 'Receita' : 'Despesa'
 
-    await sheets.spreadsheets.values.append({
+    const payload = {
       spreadsheetId,
       range: 'A:E',
-      valueInputOption: 'USER_ENTERED',
+      valueInputOption: 'USER_ENTERED' as const,
       requestBody: {
         values: [[
           new Date().toLocaleDateString('pt-BR'),
@@ -43,11 +45,17 @@ export async function saveTransaction(data: TransactionData) {
           data.description || '',
         ]],
       },
-    })
+    }
+
+    console.log('Payload enviado:', JSON.stringify(payload, null, 2))
+
+    const response = await sheets.spreadsheets.values.append(payload)
+
+    console.log('Resposta do Sheets:', response.data)
 
     return { success: true }
   } catch (err) {
-    console.error('Sheets error:', err)
+    console.error('ERRO AO SALVAR NO SHEETS:', err)
     return { error: 'Erro ao salvar na planilha.' }
   }
 }
