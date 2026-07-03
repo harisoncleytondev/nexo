@@ -40,6 +40,16 @@ export function MessageBubble({ message, saving, onConfirm, onCancel }: Props) {
           <>
             <div className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-xs">
               <div className="flex items-center justify-between">
+                <span className="text-zinc-500">Status</span>
+                <span className="text-white">{message.transactionData.status || 'Pago'}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500">Tipo</span>
+                <span className={message.transactionData.type === 'Entrada' ? 'text-green-400' : 'text-red-400'}>
+                  {message.transactionData.type}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
                 <span className="text-zinc-500">Valor</span>
                 <span className="text-white">R$ {message.transactionData.value.toFixed(2)}</span>
               </div>
@@ -49,10 +59,14 @@ export function MessageBubble({ message, saving, onConfirm, onCancel }: Props) {
               </div>
               {message.transactionData.description && (
                 <div className="flex items-center justify-between">
-                  <span className="text-zinc-500">Descrição</span>
+                  <span className="text-zinc-500">Motivo</span>
                   <span className="text-zinc-300">{message.transactionData.description}</span>
                 </div>
               )}
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500">Recorrente</span>
+                <span className="text-zinc-300">{message.transactionData.recurring || 'Não'}</span>
+              </div>
             </div>
             <div className="flex gap-2">
               <button

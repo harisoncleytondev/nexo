@@ -51,7 +51,7 @@ export function DashboardContent() {
         id: crypto.randomUUID(),
         description: msg.transactionData.description || '',
         amount: msg.transactionData.value,
-        type: msg.transactionData.value >= 0 ? 'income' : 'expense',
+        type: msg.transactionData.type === 'Entrada' ? 'income' : 'expense',
         category: msg.transactionData.category,
         date: new Date().toISOString(),
       }

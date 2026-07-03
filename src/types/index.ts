@@ -11,10 +11,12 @@ export interface AIResponse {
   type: 'message' | 'pending_transaction' | 'chart'
   text: string
   transactionData?: {
-    action: 'add' | 'remove'
+    status?: string
+    type: string
     value: number
     category: string
     description?: string | null
+    recurring?: string
   }
   chartData?: { name: string; value: number }[]
 }

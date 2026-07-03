@@ -3,10 +3,12 @@
 import { google } from 'googleapis'
 
 interface TransactionData {
-  action: 'add' | 'remove'
+  status?: string
+  type: string
   value: number
   category: string
   description?: string | null
+  recurring?: string
 }
 
 export async function saveTransaction(data: TransactionData) {
@@ -30,19 +32,21 @@ export async function saveTransaction(data: TransactionData) {
 
     const sheets = google.sheets({ version: 'v4', auth })
 
-    const type = data.action === 'add' && data.value >= 0 ? 'Receita' : 'Despesa'
+    const currentDate = new Date().toLocaleDateString('pt-BR')
 
     const payload = {
       spreadsheetId,
-      range: 'A:E',
+      range: 'A:G',
       valueInputOption: 'USER_ENTERED' as const,
       requestBody: {
         values: [[
-          new Date().toLocaleDateString('pt-BR'),
-          type,
-          data.value,
-          data.category,
+          data.status || 'Pago',
+          currentDate,
+          data.type || 'Saída',
+          data.category || 'Outros',
           data.description || '',
+          data.value,
+          data.recurring || 'Não',
         ]],
       },
     }
