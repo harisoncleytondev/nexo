@@ -43,6 +43,17 @@ function getSpreadsheetId(): string | null {
   return process.env.GOOGLE_SPREADSHEET_ID || null
 }
 
+function parseSheetValue(raw: unknown): number {
+  if (raw === undefined || raw === null || raw === '') return NaN
+  const cleaned = String(raw)
+    .replace(/R?\$?\s*/g, '')
+    .replace(/\./g, '')
+    .replace(',', '.')
+    .trim()
+  const num = parseFloat(cleaned)
+  return isNaN(num) ? NaN : num
+}
+
 export async function getTransactions(): Promise<SheetRow[]> {
   console.log('Buscando transacoes no Sheets...')
 
@@ -67,8 +78,7 @@ export async function getTransactions(): Promise<SheetRow[]> {
     const transactions: SheetRow[] = rows
       .filter((row) => {
         const value = row[5]
-        if (value === undefined || value === null || value === '') return false
-        const num = parseFloat(String(value).replace(',', '.'))
+        const num = parseSheetValue(value)
         return !isNaN(num)
       })
       .map((row) => ({
@@ -77,7 +87,7 @@ export async function getTransactions(): Promise<SheetRow[]> {
         type: String(row[2] || ''),
         category: String(row[3] || ''),
         description: String(row[4] || ''),
-        value: parseFloat(String(row[5]).replace(',', '.')),
+        value: parseSheetValue(row[5]),
         recurring: String(row[6] || ''),
       }))
 
