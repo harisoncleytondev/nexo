@@ -6,7 +6,7 @@ export function LogoutButton() {
   return (
     <button
       onClick={() => logout()}
-      className="text-xs text-neutral-500 hover:text-neutral-900"
+      className="text-xs text-zinc-500 hover:text-zinc-300"
     >
       Sair
     </button>
