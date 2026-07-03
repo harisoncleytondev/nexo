@@ -1,19 +1,25 @@
 'use client'
 
-import type { Transaction } from '@/types'
+import type { AIResponse } from '@/types'
+import { TransactionChart } from './transaction-chart'
 
 interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
-  transaction?: Transaction
+  type?: 'message' | 'pending_transaction' | 'chart'
+  transactionData?: AIResponse['transactionData']
+  chartData?: { name: string; value: number }[]
+  status?: 'pending' | 'confirmed' | 'cancelled'
 }
 
 interface Props {
   message: Message
+  onConfirm?: (msg: Message) => void
+  onCancel?: (msg: Message) => void
 }
 
-export function MessageBubble({ message }: Props) {
+export function MessageBubble({ message, onConfirm, onCancel }: Props) {
   if (message.role === 'user') {
     return (
       <div className="flex justify-end">
@@ -28,23 +34,49 @@ export function MessageBubble({ message }: Props) {
     <div className="flex justify-start">
       <div className="max-w-[80%] space-y-2">
         <p className="text-sm text-zinc-300">{message.content}</p>
-        {message.transaction && (
-          <div className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-500">Valor</span>
-              <span className={message.transaction.type === 'income' ? 'text-green-400' : 'text-red-400'}>
-                {message.transaction.type === 'income' ? '+' : '-'}R$ {message.transaction.amount.toFixed(2)}
-              </span>
+
+        {message.type === 'pending_transaction' && message.transactionData && message.status === 'pending' && (
+          <>
+            <div className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500">Valor</span>
+                <span className="text-white">R$ {message.transactionData.value.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500">Categoria</span>
+                <span className="text-zinc-300">{message.transactionData.category}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500">Descrição</span>
+                <span className="text-zinc-300">{message.transactionData.description}</span>
+              </div>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-500">Categoria</span>
-              <span className="text-zinc-300">{message.transaction.category}</span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => onConfirm?.(message)}
+                className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs text-white hover:bg-zinc-700"
+              >
+                Confirmar
+              </button>
+              <button
+                onClick={() => onCancel?.(message)}
+                className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300"
+              >
+                Cancelar
+              </button>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-500">Data</span>
-              <span className="text-zinc-300">{new Date(message.transaction.date).toLocaleDateString('pt-BR')}</span>
-            </div>
-          </div>
+          </>
+        )}
+
+        {message.type === 'pending_transaction' && message.status === 'confirmed' && (
+          <p className="text-xs text-green-400">Transação confirmada.</p>
+        )}
+        {message.type === 'pending_transaction' && message.status === 'cancelled' && (
+          <p className="text-xs text-zinc-500">Transação cancelada.</p>
+        )}
+
+        {message.type === 'chart' && message.chartData && (
+          <TransactionChart data={message.chartData} />
         )}
       </div>
     </div>

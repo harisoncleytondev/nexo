@@ -1,16 +1,20 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import type { Transaction } from '@/types'
+import { useState, useEffect, useRef, useTransition } from 'react'
+import type { Transaction, AIResponse } from '@/types'
 import { MessageBubble } from './message-bubble'
 import { ChatInput } from './chat-input'
 import { LogoutButton } from './logout-button'
+import { chat } from '@/lib/chat'
 
 interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
-  transaction?: Transaction
+  type?: 'message' | 'pending_transaction' | 'chart'
+  transactionData?: AIResponse['transactionData']
+  chartData?: { name: string; value: number }[]
+  status?: 'pending' | 'confirmed' | 'cancelled'
 }
 
 export function DashboardContent() {
@@ -18,10 +22,11 @@ export function DashboardContent() {
     {
       id: 'welcome',
       role: 'assistant',
-      content: 'Olá! Registre suas transações financeiras aqui.',
+      content: 'Olá! Como posso ajudar com suas finanças hoje?',
     },
   ])
-  const [, setTransactions] = useState<Transaction[]>([])
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [isPending, startTransition] = useTransition()
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -33,6 +38,41 @@ export function DashboardContent() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const confirmTransaction = (msg: Message) => {
+    if (!msg.transactionData) return
+
+    const transaction: Transaction = {
+      id: crypto.randomUUID(),
+      description: msg.transactionData.description,
+      amount: msg.transactionData.value,
+      type: msg.transactionData.action === 'add'
+        ? msg.transactionData.value >= 0 ? 'income' : 'expense'
+        : 'expense',
+      category: msg.transactionData.category,
+      date: new Date().toISOString(),
+    }
+
+    setTransactions((prev) => {
+      const updated = [transaction, ...prev]
+      localStorage.setItem('transactions', JSON.stringify(updated))
+      return updated
+    })
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msg.id ? { ...m, status: 'confirmed' as const } : m
+      )
+    )
+  }
+
+  const cancelTransaction = (msg: Message) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msg.id ? { ...m, status: 'cancelled' as const } : m
+      )
+    )
+  }
+
   const handleSend = (text: string) => {
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -41,38 +81,25 @@ export function DashboardContent() {
     }
     setMessages((prev) => [...prev, userMessage])
 
-    const parsed = parseTransaction(text)
-    if (parsed) {
-      setTransactions((prev) => {
-        const updated = [parsed, ...prev]
-        localStorage.setItem('transactions', JSON.stringify(updated))
-        return updated
-      })
+    startTransition(async () => {
+      const history = messages
+        .concat(userMessage)
+        .map((m) => ({ role: m.role, content: m.content }))
 
-      setTimeout(() => {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            content: 'Transação registrada:',
-            transaction: parsed,
-          },
-        ])
-      }, 400)
-    } else {
-      setTimeout(() => {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            content:
-              'Não entendi. Tente algo como: "Comprei café por R$ 8,50" ou "Recebi salário de R$ 5.000,00"',
-          },
-        ])
-      }, 400)
-    }
+      const result: AIResponse = await chat(history)
+
+      const assistantMessage: Message = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: result.text,
+        type: result.type,
+        transactionData: result.transactionData,
+        chartData: result.chartData,
+        status: result.type === 'pending_transaction' ? 'pending' : undefined,
+      }
+
+      setMessages((prev) => [...prev, assistantMessage])
+    })
   }
 
   return (
@@ -87,8 +114,20 @@ export function DashboardContent() {
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-md space-y-4 px-4 py-4">
           {messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} />
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              onConfirm={confirmTransaction}
+              onCancel={cancelTransaction}
+            />
           ))}
+          {isPending && (
+            <div className="flex justify-start">
+              <div className="max-w-[80%] rounded-2xl bg-zinc-900 px-4 py-2 text-sm text-zinc-500">
+                processando...
+              </div>
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
       </main>
@@ -100,26 +139,4 @@ export function DashboardContent() {
       </footer>
     </div>
   )
-}
-
-function parseTransaction(input: string): Transaction | null {
-  const lower = input.toLowerCase()
-  const isIncome = /recebi|ganhei|salario|salário|deposito|depósito|credito|crédito/i.test(lower)
-
-  const amountMatch = input.match(/(?:R?\$)?\s*([\d.,]+)/)
-  if (!amountMatch) return null
-
-  const amount = parseFloat(amountMatch[1].replace(',', '.'))
-  if (isNaN(amount)) return null
-
-  const description = input.replace(/(?:R?\$)?\s*[\d.,]+\s*/, '').trim()
-
-  return {
-    id: crypto.randomUUID(),
-    description: description || input,
-    amount,
-    type: isIncome ? 'income' : 'expense',
-    category: 'geral',
-    date: new Date().toISOString(),
-  }
 }
