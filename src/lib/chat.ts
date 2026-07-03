@@ -6,10 +6,10 @@ import { getTransactions } from './sheets'
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' })
 
-function buildSystemPrompt(summary: string, dataAtual: string, mesAtual: string, transactionHistory: string): string {
+function buildSystemPrompt(summary: string, today: string, currentMonthLabel: string, transactionHistory: string): string {
   return `Você é o Nexo, um assistente financeiro pessoal inteligente, proativo e amigável.
 
-Hoje é dia ${dataAtual}. O mês atual é ${mesAtual}.
+Hoje é dia ${today}. O mês atual é ${currentMonthLabel}.
 
 Você tem acesso ao resumo financeiro atual do usuário:
 ${summary}
@@ -69,8 +69,8 @@ export async function chat(messages: ChatInput[]): Promise<AIResponse> {
   const now = new Date()
   const currentMonth = now.getMonth()
   const currentYear = now.getFullYear()
-  const dataAtual = now.toLocaleDateString('pt-BR')
-  const mesAtual = now.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })
+  const today = now.toLocaleDateString('pt-BR')
+  const currentMonthLabel = now.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })
 
   const monthTransactions = transactions.filter((t) => {
     const date = parseBrDate(t.date)
@@ -109,7 +109,7 @@ Saldo Atual: R$ ${balance.toFixed(2)}`
 
   const transactionHistory =
     recentTransactions.length > 0
-      ? `Últimas transações de ${mesAtual}:\n` +
+      ? `Últimas transações de ${currentMonthLabel}:\n` +
         recentTransactions
           .map(
             (t) =>
@@ -118,10 +118,10 @@ Saldo Atual: R$ ${balance.toFixed(2)}`
           .join('\n')
       : 'Nenhuma transação registrada neste mês.'
 
-  console.log('Resumo financeiro injetado:', summary)
-  console.log('Histórico de transações:', transactionHistory)
+  console.log('Financial summary injected:', summary)
+  console.log('Transaction history:', transactionHistory)
 
-  const systemPrompt = buildSystemPrompt(summary, dataAtual, mesAtual, transactionHistory)
+  const systemPrompt = buildSystemPrompt(summary, today, currentMonthLabel, transactionHistory)
 
   const historyStr = messages
     .slice(0, -1)

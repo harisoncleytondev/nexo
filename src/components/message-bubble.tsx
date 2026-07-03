@@ -1,5 +1,7 @@
 'use client'
 
+import ReactMarkdown from 'react-markdown'
+import rehypeSanitize from 'rehype-sanitize'
 import type { AIResponse } from '@/types'
 import { TransactionChart } from './transaction-chart'
 
@@ -34,7 +36,11 @@ export function MessageBubble({ message, saving, onConfirm, onCancel }: Props) {
   return (
     <div className="flex justify-start">
       <div className="max-w-[80%] space-y-2">
-        <p className="text-sm text-zinc-300">{message.content}</p>
+        <div className="prose prose-invert prose-sm max-w-none text-zinc-300">
+          <ReactMarkdown rehypePlugins={[rehypeSanitize]}>
+            {message.content}
+          </ReactMarkdown>
+        </div>
 
         {message.type === 'pending_transaction' && message.transactionData && message.status === 'pending' && (
           <>
