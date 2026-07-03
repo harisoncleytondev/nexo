@@ -2,8 +2,6 @@
 
 import { google } from 'googleapis'
 
-const SPREADSHEET_ID = '10Z_XiDueA2Z6rpzS1CV5BAp7IaDsn_86bXrUxnMryHA'
-
 interface TransactionData {
   action: 'add' | 'remove'
   value: number
@@ -15,7 +13,9 @@ export async function saveTransaction(data: TransactionData) {
   const clientEmail = process.env.GOOGLE_CLIENT_EMAIL
   const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n')
 
-  if (!clientEmail || !privateKey) {
+  const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID
+
+  if (!clientEmail || !privateKey || !spreadsheetId) {
     return { error: 'Credenciais do Google não configuradas.' }
   }
 
@@ -31,7 +31,7 @@ export async function saveTransaction(data: TransactionData) {
     const type = data.action === 'add' && data.value >= 0 ? 'Receita' : 'Despesa'
 
     await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
+      spreadsheetId,
       range: 'A:E',
       valueInputOption: 'USER_ENTERED',
       requestBody: {
