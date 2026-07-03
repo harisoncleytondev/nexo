@@ -6,11 +6,15 @@ import { getTransactions } from './sheets'
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' })
 
-function buildSystemPrompt(summary: string): string {
+function buildSystemPrompt(summary: string, dataAtual: string, mesAtual: string, transactionHistory: string): string {
   return `Você é o Nexo, um assistente financeiro pessoal inteligente, proativo e amigável.
+
+Hoje é dia ${dataAtual}. O mês atual é ${mesAtual}.
 
 Você tem acesso ao resumo financeiro atual do usuário:
 ${summary}
+
+${transactionHistory}
 
 Sempre responda com JSON válido seguindo este schema exato:
 {
@@ -33,7 +37,8 @@ Regras:
 - Use type: "chart" APENAS quando pedir explicitamente um gráfico.
 - Para pending_transaction: status "Pago" se já pagou (ex: "comprei", "recebi", "paguei"), "Pendente" ou "Para pagar" para contas futuras. type "Entrada" para receita, "Saída" para despesas. category use APENAS os valores exatos — "Alimentação", "Moradia", "Transporte", "Lazer", "Saúde", "Educação", "Outros". description deve gerar uma frase formal contextual (ex: "comprei uma coca" vira "Compra de Coca-Cola"). recurring "Sim" só se mencionar "todo mês", "assinatura", "mensal". Default "Não".
 - Todos os valores monetários devem ser números, não strings.
-- Responda em português brasileiro.`
+- Responda em português brasileiro.
+- Quando o usuário fizer uma pergunta aberta (ex: "onde estou gastando mais?" ou "posso comprar X?"), analise OS ITENS ESPECÍFICOS na lista de transações acima para dar respostas altamente personalizadas. Se ele estiver gastando muito com besteiras (como refrigerante), cite os itens nas suas dicas financeiras. Comporte-se como um consultor real, usando o contexto temporal para falar sobre o andamento do mês.`
 }
 
 interface ChatInput {
@@ -64,6 +69,8 @@ export async function chat(messages: ChatInput[]): Promise<AIResponse> {
   const now = new Date()
   const currentMonth = now.getMonth()
   const currentYear = now.getFullYear()
+  const dataAtual = now.toLocaleDateString('pt-BR')
+  const mesAtual = now.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })
 
   const monthTransactions = transactions.filter((t) => {
     const date = parseBrDate(t.date)
@@ -91,9 +98,30 @@ Total de Entradas: R$ ${totalIncome.toFixed(2)}
 Total de Saídas: R$ ${totalExpenses.toFixed(2)}
 Saldo Atual: R$ ${balance.toFixed(2)}`
 
-  console.log('Resumo financeiro injetado:', summary)
+  const sortedByDate = [...monthTransactions].sort((a, b) => {
+    const da = parseBrDate(a.date)
+    const db = parseBrDate(b.date)
+    if (!da || !db) return 0
+    return db.getTime() - da.getTime()
+  })
 
-  const systemPrompt = buildSystemPrompt(summary)
+  const recentTransactions = sortedByDate.slice(0, 15)
+
+  const transactionHistory =
+    recentTransactions.length > 0
+      ? `Últimas transações de ${mesAtual}:\n` +
+        recentTransactions
+          .map(
+            (t) =>
+              `- [${t.date}] ${t.type} | ${t.category} | R$ ${t.value.toFixed(2)} (Motivo: ${t.description || '—'})`,
+          )
+          .join('\n')
+      : 'Nenhuma transação registrada neste mês.'
+
+  console.log('Resumo financeiro injetado:', summary)
+  console.log('Histórico de transações:', transactionHistory)
+
+  const systemPrompt = buildSystemPrompt(summary, dataAtual, mesAtual, transactionHistory)
 
   const historyStr = messages
     .slice(0, -1)
