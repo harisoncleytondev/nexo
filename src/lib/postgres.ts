@@ -1,6 +1,7 @@
 'use server'
 
 import { Pool } from 'pg'
+import { auth } from './auth'
 
 interface TransactionData {
   status?: string
@@ -59,6 +60,12 @@ export async function getTransactions(): Promise<SpentObject[]> {
 }
 
 export async function saveTransaction(data: TransactionData) {
+  const session = await auth()
+
+  if (!session) {
+    return { error: 'Sessão expirada. Faça login novamente.' }
+  }
+
   console.log('Iniciando salvamento no banco de dados...', data)
 
   try {

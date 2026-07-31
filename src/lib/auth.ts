@@ -1,40 +1,37 @@
-import { SignJWT, jwtVerify } from 'jose'
+import NextAuth from 'next-auth'
+import Credentials from 'next-auth/providers/credentials'
 
-const secret = new TextEncoder().encode(
-  process.env.SESSION_SECRET || 'fallback-secret-change-in-production'
-)
+export const { handlers, auth, signIn, signOut } = NextAuth({
+  providers: [
+    Credentials({
+      credentials: {
+        username: { label: 'Usuário', type: 'text' },
+        password: { label: 'Senha', type: 'password' },
+      },
+      authorize: async (credentials) => {
+        const username = credentials.username as string | undefined
+        const password = credentials.password as string | undefined
 
-const ACCESS_EXP = '5m'
-const REFRESH_EXP = '7d'
+        if (
+          username === process.env.ADMIN_USER &&
+          password === process.env.ADMIN_PASS
+        ) {
+          return { name: username }
+        }
 
-export async function createAccessToken(username: string) {
-  return await new SignJWT({ username, type: 'access' })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setExpirationTime(ACCESS_EXP)
-    .sign(secret)
-}
-
-export async function createRefreshToken(username: string) {
-  return await new SignJWT({ username, type: 'refresh' })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setExpirationTime(REFRESH_EXP)
-    .sign(secret)
-}
-
-export async function verifyAccessToken(token: string) {
-  try {
-    const { payload } = await jwtVerify(token, secret)
-    return payload.type === 'access' ? (payload as { username: string }) : null
-  } catch {
-    return null
-  }
-}
-
-export async function verifyRefreshToken(token: string) {
-  try {
-    const { payload } = await jwtVerify(token, secret)
-    return payload.type === 'refresh' ? (payload as { username: string }) : null
-  } catch {
-    return null
-  }
-}
+        return null
+      },
+    }),
+  ],
+  pages: {
+    signIn: '/login',
+  },
+  session: {
+    strategy: 'jwt',
+    maxAge: 60 * 60 * 24 * 7,
+    updateAge: 60 * 60 * 24,
+  },
+  callbacks: {
+    authorized: async ({ auth: session }) => !!session,
+  },
+})

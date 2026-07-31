@@ -5,6 +5,7 @@ import { Groq } from 'groq-sdk'
 import type { AIResponse, ModelProvider } from '@/types'
 import type { SpentObject } from './postgres'
 import { getTransactions } from './postgres'
+import { auth } from './auth'
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' })
 
@@ -162,6 +163,12 @@ function buildCsv(rows: SpentObject[]): string {
 }
 
 export async function chat(messages: ChatInput[], provider: ModelProvider = 'groq'): Promise<AIResponse> {
+  const session = await auth()
+
+  if (!session) {
+    return { type: 'message', text: 'Sessão expirada. Faça login novamente.' }
+  }
+
 
   const transactions = await getTransactions()
 
