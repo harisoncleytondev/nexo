@@ -44,7 +44,7 @@ Sempre responda com JSON válido seguindo este schema exato:
 }
 
 Regras:
-- OBSERVE com atenção TODAS as instruções do usuário na mensagem. Se ele pedir para usar uma data específica (ex: "coloque a data como dia 01/08"), preencha transactionData.date no formato "DD/MM/AAAA" (com o ano atual se não for mencionado, ex: "01/08/2026"). Se nenhuma data for mencionada, use a data de hoje.
+- OBSERVE com atenção TODAS as instruções do usuário na mensagem. Se ele pedir para usar uma data específica (ex: "coloque a data como dia 01/08", "entrou no dia 01/08"), preencha transactionData.date no formato "DD/MM/AAAA" (com o ano atual se não for mencionado, ex: "01/08/2026"). A data da transação vem APENAS do que o usuário disser na mensagem ATUAL — NUNCA use datas das transações do histórico acima. Se nenhuma data for mencionada, use a data de hoje.
 - Seja direto, objetivo e conciso em TODAS as respostas type "message". Máximo de 3 a 5 frases ou 3 bullets curtos. Nunca repita informações que o usuário já sabe, nunca use frases de fechamento genéricas (ex: "posso ajudar em mais algo?", "vamos trabalhar nisso?"), nunca liste dicas genéricas e óbvias.
 - Para conselhos, vá direto aos pontos concretos: cite o item, o valor e UMA ação prática. Ex: "Sua alimentação soma R$ 78,67 no mês: R$ 70,67 na escola e R$ 8,00 de Coca. Levar lanche de casa pode cortar isso pela metade." Sem enrolação.
 - Se o usuário fizer perguntas abertas, pedir conselhos, ou perguntar sobre o saldo, atue como um consultor humano. Responda de forma natural e humanizada usando type: "message". Não seja robótico.
@@ -64,6 +64,30 @@ interface ChatInput {
   content: string
 }
 
+function isValidBrDate(dateStr?: string): boolean {
+  if (!dateStr) return false
+  const parts = dateStr.split('/')
+  if (parts.length !== 3) return false
+  const [day, month, year] = parts.map(Number)
+  if ([day, month, year].some(isNaN)) return false
+  const date = new Date(year, month - 1, day)
+  return date.getDate() === day && date.getMonth() === month - 1 && date.getFullYear() === year
+}
+
+function formatCurrencyBRL(value: number): string {
+  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
+
+function buildTransactionConfirmation(data: AIResponse['transactionData']): string {
+  if (!data) return 'Transação registrada.'
+
+  const prefix = data.type === 'Entrada' ? 'Entrada de' : 'Saída de'
+  const description = data.description ? ` (${data.description})` : ''
+  const date = data.date ? ` em ${data.date}` : ''
+
+  return `${prefix} ${formatCurrencyBRL(data.value)}${description}${date}`
+}
+
 function parseAIResponse(
   rawText: string,
   transactions: SpentObject[],
@@ -74,6 +98,25 @@ function parseAIResponse(
 
   try {
     const parsed = JSON.parse(text) as AIResponse
+
+    if (parsed.transactionData && parsed.type === 'message') {
+      parsed.type = 'pending_transaction'
+    }
+
+    if (parsed.type === 'pending_transaction' && parsed.transactionData) {
+      const data = parsed.transactionData
+
+      if (!isValidBrDate(data.date)) {
+        data.date = new Date().toLocaleDateString('pt-BR')
+      }
+
+      const numericValue = Number(data.value)
+      if (!isNaN(numericValue)) {
+        data.value = numericValue
+      }
+
+      parsed.text = buildTransactionConfirmation(data)
+    }
 
     if (parsed.type === 'chart') {
       const expenses = transactions.filter((t) => t.type === 'Saída')
@@ -246,7 +289,7 @@ Saldo Atual: R$ ${balance.toFixed(2)}`
             content: m.content,
           })),
         ],
-        temperature: 1,
+        temperature: 0.3,
         max_completion_tokens: 2048,
         top_p: 1,
         stream: false,
