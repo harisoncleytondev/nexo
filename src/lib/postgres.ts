@@ -5,6 +5,7 @@ import { auth } from './auth'
 
 interface TransactionData {
   status?: string
+  date?: string
   type: string
   value: number
   category: string
@@ -69,7 +70,7 @@ export async function saveTransaction(data: TransactionData) {
   console.log('Iniciando salvamento no banco de dados...', data)
 
   try {
-    const currentDate = new Date().toLocaleDateString('pt-BR')
+    const currentDate = data.date || new Date().toLocaleDateString('pt-BR')
 
     const values = [
       data.status || 'Pago',

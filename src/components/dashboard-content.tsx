@@ -60,13 +60,19 @@ export function DashboardContent() {
     const result = await saveTransaction(msg.transactionData)
 
     if (result.success) {
+      const dateStr = msg.transactionData.date || new Date().toLocaleDateString('pt-BR')
+      const [day, month, year] = dateStr.split('/')
+      const transactionDate = !isNaN(Number(day)) && !isNaN(Number(month)) && !isNaN(Number(year))
+        ? new Date(Number(year), Number(month) - 1, Number(day)).toISOString()
+        : new Date().toISOString()
+
       const transaction: Transaction = {
         id: crypto.randomUUID(),
         description: msg.transactionData.description || '',
         amount: msg.transactionData.value,
         type: msg.transactionData.type === 'Entrada' ? 'income' : 'expense',
         category: msg.transactionData.category,
-        date: new Date().toISOString(),
+        date: transactionDate,
       }
 
       setTransactions((prev) => {
@@ -82,7 +88,7 @@ export function DashboardContent() {
         {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: 'Transação salva na planilha com sucesso!',
+          content: 'Transação salva no banco de dados com sucesso!',
         },
       ])
     } else {

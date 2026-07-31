@@ -14,6 +14,7 @@ export interface AIResponse {
   text: string
   transactionData?: {
     status?: string
+    date?: string
     type: string
     value: number
     category: string

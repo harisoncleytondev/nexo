@@ -51,6 +51,12 @@ export function MessageBubble({ message, saving, onConfirm, onCancel }: Props) {
                 <span className="text-zinc-500">Status</span>
                 <span className="text-white">{message.transactionData.status || 'Pago'}</span>
               </div>
+              {message.transactionData.date && (
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500">Data</span>
+                  <span className="text-white">{message.transactionData.date}</span>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <span className="text-zinc-500">Tipo</span>
                 <span className={message.transactionData.type === 'Entrada' ? 'text-green-400' : 'text-red-400'}>
