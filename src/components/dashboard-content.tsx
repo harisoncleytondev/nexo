@@ -33,6 +33,7 @@ export function DashboardContent() {
   const [isPending, startTransition] = useTransition()
   const [savingId, setSavingId] = useState<string | null>(null)
   const [provider, setProvider] = useState<ModelProvider>(() => {
+    if (typeof window === 'undefined') return 'groq'
     const stored = localStorage.getItem('model-provider')
     return stored === 'gemini' || stored === 'groq' ? stored : 'groq'
   })
