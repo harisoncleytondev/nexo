@@ -2,7 +2,8 @@
 
 import { GoogleGenAI } from '@google/genai'
 import type { AIResponse } from '@/types'
-import { getTransactions } from './sheets'
+import type { SpentObject } from './postgres'
+import { getTransactions } from './postgres'
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' })
 
@@ -18,7 +19,7 @@ ${transactionHistory}
 
 Sempre responda com JSON válido seguindo este schema exato:
 {
-  "type": "message" | "pending_transaction" | "chart",
+  "type": "message" | "pending_transaction" | "chart" | "export",
   "text": "string",
   "transactionData": {
     "status": "Pago" | "Pendente" | "Para pagar",
@@ -28,13 +29,18 @@ Sempre responda com JSON válido seguindo este schema exato:
     "description": "string | null",
     "recurring": "Sim" | "Não"
   },
-  "chartData": [{ "name": "string", "value": number }]
+  "chartData": [{ "name": "string", "value": number }],
+  "exportData": {
+    "period": "total" | "monthly",
+    "month": "YYYY-MM | null"
+  }
 }
 
 Regras:
 - Se o usuário fizer perguntas abertas, pedir conselhos, ou perguntar sobre o saldo, atue como um consultor humano. Responda de forma natural, analítica e humanizada usando type: "message". Não seja robótico.
 - Use type: "pending_transaction" APENAS quando o usuário expressar claramente a intenção de adicionar ou remover um valor.
 - Use type: "chart" APENAS quando pedir explicitamente um gráfico.
+- Use type: "export" quando o usuário pedir para exportar, baixar ou gerar uma planilha com os gastos. Preencha exportData.period: "total" para todos os gastos ou "monthly" para os gastos de um mês específico. Para "monthly", informe exportData.month no formato "YYYY-MM" apenas se o usuário mencionar um mês (ex: "gastos de janeiro de 2026" -> "2026-01"); caso contrário use null para o mês atual. No campo text avise que a planilha está sendo gerada.
 - Para pending_transaction: status "Pago" se já pagou (ex: "comprei", "recebi", "paguei"), "Pendente" ou "Para pagar" para contas futuras. type "Entrada" para receita, "Saída" para despesas. category use APENAS os valores exatos — "Alimentação", "Moradia", "Transporte", "Lazer", "Saúde", "Educação", "Outros". description deve gerar uma frase formal contextual (ex: "comprei uma coca" vira "Compra de Coca-Cola"). recurring "Sim" só se mencionar "todo mês", "assinatura", "mensal". Default "Não".
 - Todos os valores monetários devem ser números, não strings.
 - Responda em português brasileiro.
@@ -59,6 +65,38 @@ function parseBrDate(dateStr: string): Date | null {
   const [day, month, year] = parts.map(Number)
   if (isNaN(day) || isNaN(month) || isNaN(year)) return null
   return new Date(year, month - 1, day)
+}
+
+function formatCurrency(value: number): string {
+  return value.toFixed(2).replace('.', ',')
+}
+
+function buildCsv(rows: SpentObject[]): string {
+  const header = ['Status', 'Data', 'Tipo', 'Categoria', 'Descrição', 'Valor', 'Recorrente']
+
+  const body = rows.map((t) =>
+    [
+      t.status,
+      t.date,
+      t.type,
+      t.category,
+      `"${(t.description || '').replace(/"/g, '""')}"`,
+      formatCurrency(t.value),
+      t.recurring,
+    ].join(';'),
+  )
+
+  const totalIncome = rows.filter((t) => t.type === 'Entrada').reduce((sum, t) => sum + t.value, 0)
+  const totalExpenses = rows.filter((t) => t.type === 'Saída').reduce((sum, t) => sum + t.value, 0)
+
+  const summary = [
+    '',
+    ['Total de Entradas', '', '', '', '', formatCurrency(totalIncome), ''].join(';'),
+    ['Total de Saídas', '', '', '', '', formatCurrency(totalExpenses), ''].join(';'),
+    ['Saldo', '', '', '', '', formatCurrency(totalIncome - totalExpenses), ''].join(';'),
+  ]
+
+  return '\uFEFF' + [header.join(';'), ...body, ...summary].join('\r\n')
 }
 
 export async function chat(messages: ChatInput[]): Promise<AIResponse> {
@@ -156,6 +194,29 @@ Saldo Atual: R$ ${balance.toFixed(2)}`
           name,
           value,
         }))
+      }
+
+      if (parsed.type === 'export') {
+        const period = parsed.exportData?.period === 'monthly' ? 'monthly' : 'total'
+        const [targetYear, targetMonth] = (parsed.exportData?.month || `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`)
+          .split('-')
+          .map(Number)
+
+        const exportRows = transactions.filter((t) => {
+          if (period === 'total') return true
+          const date = parseBrDate(t.date)
+          if (!date) return false
+          return date.getFullYear() === targetYear && date.getMonth() === targetMonth - 1
+        })
+
+        const monthSuffix = Number.isNaN(targetMonth) ? '' : `${targetYear}-${String(targetMonth).padStart(2, '0')}`
+
+        parsed.exportData = {
+          period,
+          month: parsed.exportData?.month || (period === 'monthly' ? monthSuffix : undefined),
+          fileName: `gastos-${period === 'monthly' ? monthSuffix : 'total'}.csv`,
+          csvContent: buildCsv(exportRows),
+        }
       }
 
       return parsed

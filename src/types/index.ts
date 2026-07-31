@@ -8,7 +8,7 @@ export interface Transaction {
 }
 
 export interface AIResponse {
-  type: 'message' | 'pending_transaction' | 'chart'
+  type: 'message' | 'pending_transaction' | 'chart' | 'export'
   text: string
   transactionData?: {
     status?: string
@@ -19,4 +19,10 @@ export interface AIResponse {
     recurring?: string
   }
   chartData?: { name: string; value: number }[]
+  exportData?: {
+    period: 'total' | 'monthly'
+    month?: string
+    fileName: string
+    csvContent: string
+  }
 }

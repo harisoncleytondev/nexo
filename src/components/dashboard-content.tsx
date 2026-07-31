@@ -6,15 +6,17 @@ import { MessageBubble } from './message-bubble'
 import { ChatInput } from './chat-input'
 import { LogoutButton } from './logout-button'
 import { chat } from '@/lib/chat'
-import { saveTransaction } from '@/lib/sheets'
+import { saveTransaction } from '@/lib/postgres'
+import { downloadCsv } from '@/lib/download'
 
 interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
-  type?: 'message' | 'pending_transaction' | 'chart'
+  type?: 'message' | 'pending_transaction' | 'chart' | 'export'
   transactionData?: AIResponse['transactionData']
   chartData?: { name: string; value: number }[]
+  exportData?: AIResponse['exportData']
   status?: 'pending' | 'confirmed' | 'cancelled'
 }
 
@@ -114,6 +116,10 @@ export function DashboardContent() {
 
       const result: AIResponse = await chat(history)
 
+      if (result.type === 'export' && result.exportData) {
+        downloadCsv(result.exportData)
+      }
+
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
@@ -121,6 +127,7 @@ export function DashboardContent() {
         type: result.type,
         transactionData: result.transactionData,
         chartData: result.chartData,
+        exportData: result.exportData,
         status: result.type === 'pending_transaction' ? 'pending' : undefined,
       }
 

@@ -4,14 +4,16 @@ import ReactMarkdown from 'react-markdown'
 import rehypeSanitize from 'rehype-sanitize'
 import type { AIResponse } from '@/types'
 import { TransactionChart } from './transaction-chart'
+import { downloadCsv } from '@/lib/download'
 
 interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
-  type?: 'message' | 'pending_transaction' | 'chart'
+  type?: 'message' | 'pending_transaction' | 'chart' | 'export'
   transactionData?: AIResponse['transactionData']
   chartData?: { name: string; value: number }[]
+  exportData?: AIResponse['exportData']
   status?: 'pending' | 'confirmed' | 'cancelled'
 }
 
@@ -95,6 +97,15 @@ export function MessageBubble({ message, saving, onConfirm, onCancel }: Props) {
 
         {message.type === 'chart' && message.chartData && (
           <TransactionChart data={message.chartData} />
+        )}
+
+        {message.type === 'export' && message.exportData && (
+          <button
+            onClick={() => downloadCsv(message.exportData!)}
+            className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs text-white hover:bg-zinc-700"
+          >
+            Baixar planilha novamente
+          </button>
         )}
       </div>
     </div>
