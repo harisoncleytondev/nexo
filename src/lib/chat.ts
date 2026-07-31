@@ -52,7 +52,7 @@ Regras:
 - Use type: "chart" APENAS quando pedir explicitamente um gráfico.
 - Use type: "export" quando o usuário pedir para exportar, baixar ou gerar uma planilha com os gastos. Preencha exportData.period: "total" para todos os gastos ou "monthly" para os gastos de um mês específico. Para "monthly", informe exportData.month no formato "YYYY-MM" apenas se o usuário mencionar um mês (ex: "gastos de janeiro de 2026" -> "2026-01"); caso contrário use o mês atual. No campo text avise que a planilha está sendo gerada.
 - text é OBRIGATÓRIO em todos os tipos: uma confirmação breve da transação ou a resposta ao usuário.
-- Para pending_transaction: status "Pago" se a ação JÁ ACONTECEU (verbos no passado ou pretérito: "comprei", "enviei", "paguei", "recebi", "transferi"). "Pendente" ou "Para pagar" APENAS para contas futuras ou ações que ainda vão acontecer (verbos no futuro: "vou pagar", "vou comprar", "preciso pagar"). type é definido pelo MOVIMENTO do dinheiro: "Saída" quando o dinheiro SAI (comprei, enviei, paguei, transferi, gastei) e "Entrada" quando o dinheiro ENTRA (recebi, ganhei). category use APENAS os valores exatos — "Alimentação", "Moradia", "Transporte", "Lazer", "Saúde", "Educação", "Outros". description deve ser uma frase formal contextual e curta (ex: "comprei uma coca" vira "Compra de Coca-Cola"; "enviei 10 reais para angela sorteio" vira "Envio para sorteio da Ângela"). recurring "Sim" só se mencionar "todo mês", "assinatura", "mensal". Default "Não".
+- Para pending_transaction: status SEMPRE "Pago" por padrão — a menos que o usuário deixe EXPLÍCITO que a ação é futura (ex: "vou pagar", "preciso pagar", "tenho que pagar", "vou comprar", "mês que vem"). Nunca marque como "Pendente" ou "Para pagar" se o usuário não mencionou que a transação ainda vai acontecer. type é definido pelo MOVIMENTO do dinheiro: "Saída" quando o dinheiro SAI (comprei, enviei, paguei, transferi, gastei) e "Entrada" quando o dinheiro ENTRA (recebi, ganhei). category use APENAS os valores exatos — "Alimentação", "Moradia", "Transporte", "Lazer", "Saúde", "Educação", "Outros". description deve ser uma frase formal contextual e curta (ex: "comprei uma coca" vira "Compra de Coca-Cola"; "enviei 10 reais para angela sorteio" vira "Envio para sorteio da Ângela"). recurring "Sim" só se mencionar "todo mês", "assinatura", "mensal". Default "Não".
 - Emita APENAS os campos relevantes para o tipo escolhido. Para pending_transaction, inclua transactionData e NÃO inclua chartData nem exportData. Para message, emita apenas text. Nunca preencha campos com null — omita-os completamente do JSON.
 - Todos os valores monetários devem ser números, não strings.
 - Responda em português brasileiro.
@@ -80,6 +80,10 @@ function formatCurrencyBRL(value: number): string {
 
 function normalizeTransactionData(data: AIResponse['transactionData']): AIResponse['transactionData'] {
   if (!data) return data
+
+  if (!data.status) {
+    data.status = 'Pago'
+  }
 
   if (!isValidBrDate(data.date)) {
     data.date = new Date().toLocaleDateString('pt-BR')
@@ -172,8 +176,27 @@ function parseAIResponse(
 const TRANSACTION_MOVEMENT_PATTERN =
   /(entrou|saiu|entrada|saída|saida|recebi|recebimento|ganhei|paguei|pagamento|comprei|compra|enviei|transferi|transferência|transferencia|gastei|gasto|depositei|saque|depósito|deposito|registre|registrar|registra|adiciona|adicionar|lanc[ea]|lancei)/i
 
+const FUTURE_INTENT_PATTERN =
+  /(vou|vai|vamos|pagarei|comprarei|preciso pagar|tenho que pagar|devo pagar|mês que vem|mes que vem|no mês que vem|amanhã|amanha|depois|futura|futuro|até dia|a pagar|pendente)/i
+
+function hasFutureIntent(text: string): boolean {
+  return FUTURE_INTENT_PATTERN.test(text)
+}
+
 function hasTransactionIntent(text: string): boolean {
   return /\d/.test(text) && TRANSACTION_MOVEMENT_PATTERN.test(text)
+}
+
+function applyStatusDefault(response: AIResponse, lastMessage: string): AIResponse {
+  if (response.type === 'pending_transaction' && response.transactionData) {
+    const status = response.transactionData.status
+
+    if ((status === 'Pendente' || status === 'Para pagar') && !hasFutureIntent(lastMessage)) {
+      response.transactionData.status = 'Pago'
+    }
+  }
+
+  return response
 }
 
 function parseExtractedTransaction(raw: string): AIResponse['transactionData'] | null {
@@ -206,7 +229,7 @@ Responda APENAS com o JSON do objeto transactionData, sem texto e sem código ma
   "recurring": "Sim" | "Não"
 }
 Regras:
-- status: "Pago" se a ação JÁ aconteceu (comprei, enviei, paguei, recebi, transferi — verbos no passado). "Pendente" ou "Para pagar" apenas para ações futuras (vou pagar, vou comprar, preciso pagar).
+- status: SEMPRE "Pago" por padrão — a menos que o usuário deixe EXPLÍCITO que a ação é futura (vou pagar, preciso pagar, vou comprar, mês que vem). Nunca marque "Pendente"/"Para pagar" sem o usuário ter dito que ainda vai pagar.
 - type: "Entrada" quando o dinheiro ENTRA (recebi, entrou, ganhei). "Saída" quando o dinheiro SAI (comprei, enviei, paguei, transferi, gastei).
 - category: APENAS um destes valores exatos — "Alimentação", "Moradia", "Transporte", "Lazer", "Saúde", "Educação", "Outros". "Salário" NÃO é categoria: use "Outros".
 - date: formato DD/MM/AAAA. Se o usuário mencionou uma data, use exatamente essa (ano ${today.split('/')[2]} se o ano não foi informado). Se não mencionou, use ${today}.
@@ -406,12 +429,15 @@ Saldo Atual: R$ ${balance.toFixed(2)}`
         stream: false,
       })
 
-      return ensureTransaction(
-        parseAIResponse(completion.choices[0]?.message?.content || '', transactions, currentYear, currentMonth),
+      return applyStatusDefault(
+        await ensureTransaction(
+          parseAIResponse(completion.choices[0]?.message?.content || '', transactions, currentYear, currentMonth),
+          lastMessage,
+          systemPrompt,
+          provider,
+          today,
+        ),
         lastMessage,
-        systemPrompt,
-        provider,
-        today,
       )
     }
 
@@ -421,12 +447,15 @@ Saldo Atual: R$ ${balance.toFixed(2)}`
       system_instruction: systemPrompt,
     })
 
-    return ensureTransaction(
-      parseAIResponse(interaction.output_text || '', transactions, currentYear, currentMonth),
+    return applyStatusDefault(
+      await ensureTransaction(
+        parseAIResponse(interaction.output_text || '', transactions, currentYear, currentMonth),
+        lastMessage,
+        systemPrompt,
+        provider,
+        today,
+      ),
       lastMessage,
-      systemPrompt,
-      provider,
-      today,
     )
   } catch {
     return {
