@@ -78,6 +78,21 @@ function formatCurrencyBRL(value: number): string {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
+function normalizeTransactionData(data: AIResponse['transactionData']): AIResponse['transactionData'] {
+  if (!data) return data
+
+  if (!isValidBrDate(data.date)) {
+    data.date = new Date().toLocaleDateString('pt-BR')
+  }
+
+  const numericValue = Number(data.value)
+  if (!isNaN(numericValue)) {
+    data.value = numericValue
+  }
+
+  return data
+}
+
 function buildTransactionConfirmation(data: AIResponse['transactionData']): string {
   if (!data) return 'Transação registrada.'
 
@@ -104,18 +119,8 @@ function parseAIResponse(
     }
 
     if (parsed.type === 'pending_transaction' && parsed.transactionData) {
-      const data = parsed.transactionData
-
-      if (!isValidBrDate(data.date)) {
-        data.date = new Date().toLocaleDateString('pt-BR')
-      }
-
-      const numericValue = Number(data.value)
-      if (!isNaN(numericValue)) {
-        data.value = numericValue
-      }
-
-      parsed.text = buildTransactionConfirmation(data)
+      parsed.transactionData = normalizeTransactionData(parsed.transactionData)
+      parsed.text = buildTransactionConfirmation(parsed.transactionData)
     }
 
     if (parsed.type === 'chart') {
@@ -162,6 +167,110 @@ function parseAIResponse(
       text: text || 'Desculpe, não consegui processar sua solicitação.',
     }
   }
+}
+
+const TRANSACTION_MOVEMENT_PATTERN =
+  /(entrou|saiu|entrada|saída|saida|recebi|recebimento|ganhei|paguei|pagamento|comprei|compra|enviei|transferi|transferência|transferencia|gastei|gasto|depositei|saque|depósito|deposito|registre|registrar|registra|adiciona|adicionar|lanc[ea]|lancei)/i
+
+function hasTransactionIntent(text: string): boolean {
+  return /\d/.test(text) && TRANSACTION_MOVEMENT_PATTERN.test(text)
+}
+
+function parseExtractedTransaction(raw: string): AIResponse['transactionData'] | null {
+  try {
+    const cleaned = cleanJsonResponse(raw)
+    const parsed = JSON.parse(cleaned)
+    const data = (parsed.transactionData ?? parsed) as AIResponse['transactionData']
+
+    if (data && typeof data.value !== 'undefined' && data.type) {
+      return normalizeTransactionData(data)
+    }
+
+    return null
+  } catch {
+    return null
+  }
+}
+
+function buildExtractInstruction(today: string): string {
+  return `Hoje é dia ${today}.
+O usuário acabou de descrever uma transação financeira. Extraia os dados dela.
+Responda APENAS com o JSON do objeto transactionData, sem texto e sem código markdown:
+{
+  "status": "Pago" | "Pendente" | "Para pagar",
+  "date": "DD/MM/AAAA",
+  "type": "Entrada" | "Saída",
+  "value": number,
+  "category": "Alimentação" | "Moradia" | "Transporte" | "Lazer" | "Saúde" | "Educação" | "Outros",
+  "description": "string",
+  "recurring": "Sim" | "Não"
+}
+Regras:
+- status: "Pago" se a ação JÁ aconteceu (comprei, enviei, paguei, recebi, transferi — verbos no passado). "Pendente" ou "Para pagar" apenas para ações futuras (vou pagar, vou comprar, preciso pagar).
+- type: "Entrada" quando o dinheiro ENTRA (recebi, entrou, ganhei). "Saída" quando o dinheiro SAI (comprei, enviei, paguei, transferi, gastei).
+- category: APENAS um destes valores exatos — "Alimentação", "Moradia", "Transporte", "Lazer", "Saúde", "Educação", "Outros". "Salário" NÃO é categoria: use "Outros".
+- date: formato DD/MM/AAAA. Se o usuário mencionou uma data, use exatamente essa (ano ${today.split('/')[2]} se o ano não foi informado). Se não mencionou, use ${today}.
+- description: frase curta e formal (ex: "enviei 10 reais para angela sorteio" -> "Envio para sorteio da Ângela").
+- recurring: "Sim" apenas se mencionar "todo mês"/"assinatura"/"mensal". Default "Não".`
+}
+
+async function extractTransactionData(
+  text: string,
+  systemPrompt: string,
+  provider: ModelProvider,
+  today: string,
+): Promise<AIResponse['transactionData'] | null> {
+  const instruction = buildExtractInstruction(today)
+
+  try {
+    if (provider === 'groq') {
+      const completion = await groq.chat.completions.create({
+        model: GROQ_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'system', content: instruction },
+          { role: 'user', content: text },
+        ],
+        temperature: 0,
+        max_tokens: 300,
+        stream: false,
+      })
+
+      return parseExtractedTransaction(completion.choices[0]?.message?.content || '')
+    }
+
+    const interaction = await ai.interactions.create({
+      model: 'gemini-3.5-flash',
+      input: text,
+      system_instruction: `${systemPrompt}\n\n${instruction}`,
+    })
+
+    return parseExtractedTransaction(interaction.output_text || '')
+  } catch {
+    return null
+  }
+}
+
+async function ensureTransaction(
+  response: AIResponse,
+  lastMessage: string,
+  systemPrompt: string,
+  provider: ModelProvider,
+  today: string,
+): Promise<AIResponse> {
+  if (response.type === 'message' && !response.transactionData && hasTransactionIntent(lastMessage)) {
+    const data = await extractTransactionData(lastMessage, systemPrompt, provider, today)
+
+    if (data) {
+      return {
+        type: 'pending_transaction',
+        text: buildTransactionConfirmation(data),
+        transactionData: data,
+      }
+    }
+  }
+
+  return response
 }
 
 function cleanJsonResponse(raw: string): string {
@@ -220,6 +329,8 @@ export async function chat(messages: ChatInput[], provider: ModelProvider = 'gro
 
 
   const transactions = await getTransactions()
+
+  const lastMessage = messages[messages.length - 1]?.content || ''
 
   const now = new Date()
   const currentMonth = now.getMonth()
@@ -295,21 +406,28 @@ Saldo Atual: R$ ${balance.toFixed(2)}`
         stream: false,
       })
 
-      return parseAIResponse(
-        completion.choices[0]?.message?.content || '',
-        transactions,
-        currentYear,
-        currentMonth,
+      return ensureTransaction(
+        parseAIResponse(completion.choices[0]?.message?.content || '', transactions, currentYear, currentMonth),
+        lastMessage,
+        systemPrompt,
+        provider,
+        today,
       )
     }
 
     const interaction = await ai.interactions.create({
       model: 'gemini-3.5-flash',
-      input: messages[messages.length - 1]?.content || '',
+      input: lastMessage,
       system_instruction: systemPrompt,
     })
 
-    return parseAIResponse(interaction.output_text || '', transactions, currentYear, currentMonth)
+    return ensureTransaction(
+      parseAIResponse(interaction.output_text || '', transactions, currentYear, currentMonth),
+      lastMessage,
+      systemPrompt,
+      provider,
+      today,
+    )
   } catch {
     return {
       type: 'message',
