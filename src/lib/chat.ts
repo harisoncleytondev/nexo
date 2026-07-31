@@ -1,11 +1,16 @@
 'use server'
 
 import { GoogleGenAI } from '@google/genai'
-import type { AIResponse } from '@/types'
+import { Groq } from 'groq-sdk'
+import type { AIResponse, ModelProvider } from '@/types'
 import type { SpentObject } from './postgres'
 import { getTransactions } from './postgres'
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' })
+
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || '' })
+
+const GROQ_MODEL = 'llama-3.1-8b-instant'
 
 function buildSystemPrompt(summary: string, today: string, currentMonthLabel: string, transactionHistory: string): string {
   return `Você é o Nexo, um assistente financeiro pessoal inteligente, proativo e amigável.
@@ -50,6 +55,63 @@ Regras:
 interface ChatInput {
   role: string
   content: string
+}
+
+function parseAIResponse(
+  rawText: string,
+  transactions: SpentObject[],
+  currentYear: number,
+  currentMonth: number,
+): AIResponse {
+  const text = cleanJsonResponse(rawText)
+
+  try {
+    const parsed = JSON.parse(text) as AIResponse
+
+    if (parsed.type === 'chart') {
+      const expenses = transactions.filter((t) => t.type === 'Saída')
+
+      const grouped = expenses.reduce<Record<string, number>>((acc, t) => {
+        acc[t.category] = (acc[t.category] || 0) + t.value
+        return acc
+      }, {})
+
+      parsed.chartData = Object.entries(grouped).map(([name, value]) => ({
+        name,
+        value,
+      }))
+    }
+
+    if (parsed.type === 'export') {
+      const period = parsed.exportData?.period === 'monthly' ? 'monthly' : 'total'
+      const [targetYear, targetMonth] = (parsed.exportData?.month || `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`)
+        .split('-')
+        .map(Number)
+
+      const exportRows = transactions.filter((t) => {
+        if (period === 'total') return true
+        const date = parseBrDate(t.date)
+        if (!date) return false
+        return date.getFullYear() === targetYear && date.getMonth() === targetMonth - 1
+      })
+
+      const monthSuffix = Number.isNaN(targetMonth) ? '' : `${targetYear}-${String(targetMonth).padStart(2, '0')}`
+
+      parsed.exportData = {
+        period,
+        month: parsed.exportData?.month || (period === 'monthly' ? monthSuffix : undefined),
+        fileName: `gastos-${period === 'monthly' ? monthSuffix : 'total'}.csv`,
+        csvContent: buildCsv(exportRows),
+      }
+    }
+
+    return parsed
+  } catch {
+    return {
+      type: 'message',
+      text: text || 'Desculpe, não consegui processar sua solicitação.',
+    }
+  }
 }
 
 function cleanJsonResponse(raw: string): string {
@@ -99,8 +161,7 @@ function buildCsv(rows: SpentObject[]): string {
   return '\uFEFF' + [header.join(';'), ...body, ...summary].join('\r\n')
 }
 
-export async function chat(messages: ChatInput[]): Promise<AIResponse> {
-  const lastMessage = messages[messages.length - 1]?.content || ''
+export async function chat(messages: ChatInput[], provider: ModelProvider = 'groq'): Promise<AIResponse> {
 
   const transactions = await getTransactions()
 
@@ -161,71 +222,38 @@ Saldo Atual: R$ ${balance.toFixed(2)}`
 
   const systemPrompt = buildSystemPrompt(summary, today, currentMonthLabel, transactionHistory)
 
-  const historyStr = messages
-    .slice(0, -1)
-    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-    .join('\n')
-
-  const prompt = historyStr
-    ? `History:\n${historyStr}\n\nUser: ${lastMessage}\n\nJSON:`
-    : `User: ${lastMessage}\n\nJSON:`
-
   try {
+    if (provider === 'groq') {
+      const completion = await groq.chat.completions.create({
+        model: GROQ_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...messages.map((m) => ({
+            role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
+            content: m.content,
+          })),
+        ],
+        temperature: 1,
+        max_completion_tokens: 2048,
+        top_p: 1,
+        stream: false,
+      })
+
+      return parseAIResponse(
+        completion.choices[0]?.message?.content || '',
+        transactions,
+        currentYear,
+        currentMonth,
+      )
+    }
+
     const interaction = await ai.interactions.create({
       model: 'gemini-3.5-flash',
-      input: prompt,
+      input: messages[messages.length - 1]?.content || '',
       system_instruction: systemPrompt,
     })
 
-    const text = cleanJsonResponse(interaction.output_text || '')
-
-    try {
-      const parsed = JSON.parse(text) as AIResponse
-
-      if (parsed.type === 'chart') {
-        const expenses = transactions.filter((t) => t.type === 'Saída')
-
-        const grouped = expenses.reduce<Record<string, number>>((acc, t) => {
-          acc[t.category] = (acc[t.category] || 0) + t.value
-          return acc
-        }, {})
-
-        parsed.chartData = Object.entries(grouped).map(([name, value]) => ({
-          name,
-          value,
-        }))
-      }
-
-      if (parsed.type === 'export') {
-        const period = parsed.exportData?.period === 'monthly' ? 'monthly' : 'total'
-        const [targetYear, targetMonth] = (parsed.exportData?.month || `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`)
-          .split('-')
-          .map(Number)
-
-        const exportRows = transactions.filter((t) => {
-          if (period === 'total') return true
-          const date = parseBrDate(t.date)
-          if (!date) return false
-          return date.getFullYear() === targetYear && date.getMonth() === targetMonth - 1
-        })
-
-        const monthSuffix = Number.isNaN(targetMonth) ? '' : `${targetYear}-${String(targetMonth).padStart(2, '0')}`
-
-        parsed.exportData = {
-          period,
-          month: parsed.exportData?.month || (period === 'monthly' ? monthSuffix : undefined),
-          fileName: `gastos-${period === 'monthly' ? monthSuffix : 'total'}.csv`,
-          csvContent: buildCsv(exportRows),
-        }
-      }
-
-      return parsed
-    } catch {
-      return {
-        type: 'message',
-        text: text || 'Desculpe, não consegui processar sua solicitação.',
-      }
-    }
+    return parseAIResponse(interaction.output_text || '', transactions, currentYear, currentMonth)
   } catch {
     return {
       type: 'message',

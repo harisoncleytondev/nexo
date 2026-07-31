@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useEffect, useRef, useTransition } from 'react'
-import type { Transaction, AIResponse } from '@/types'
+import type { Transaction, AIResponse, ModelProvider } from '@/types'
 import { MessageBubble } from './message-bubble'
 import { ChatInput } from './chat-input'
 import { LogoutButton } from './logout-button'
+import { ModelSelector } from './model-selector'
 import { chat } from '@/lib/chat'
 import { saveTransaction } from '@/lib/postgres'
 import { downloadCsv } from '@/lib/download'
@@ -31,7 +32,16 @@ export function DashboardContent() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [isPending, startTransition] = useTransition()
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [provider, setProvider] = useState<ModelProvider>(() => {
+    const stored = localStorage.getItem('model-provider')
+    return stored === 'gemini' || stored === 'groq' ? stored : 'groq'
+  })
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  const handleProviderChange = (next: ModelProvider) => {
+    setProvider(next)
+    localStorage.setItem('model-provider', next)
+  }
 
   useEffect(() => {
     const stored = localStorage.getItem('transactions')
@@ -114,7 +124,7 @@ export function DashboardContent() {
         .concat(userMessage)
         .map((m) => ({ role: m.role, content: m.content }))
 
-      const result: AIResponse = await chat(history)
+      const result: AIResponse = await chat(history, provider)
 
       if (result.type === 'export' && result.exportData) {
         downloadCsv(result.exportData)
@@ -140,7 +150,10 @@ export function DashboardContent() {
       <header className="sticky top-0 z-10 border-b border-zinc-800 bg-black/80 backdrop-blur-sm">
         <div className="mx-auto flex max-w-md items-center justify-between px-4 py-3">
           <h1 className="text-sm font-semibold text-white">Nexo</h1>
-          <LogoutButton />
+          <div className="flex items-center gap-2">
+            <ModelSelector value={provider} onChange={handleProviderChange} />
+            <LogoutButton />
+          </div>
         </div>
       </header>
 

@@ -1,3 +1,5 @@
+export type ModelProvider = 'gemini' | 'groq'
+
 export interface Transaction {
   id: string
   description: string
