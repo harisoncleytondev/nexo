@@ -13,7 +13,13 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || '' })
 
 const GROQ_MODEL = 'llama-3.1-8b-instant'
 
-function buildSystemPrompt(summary: string, today: string, currentMonthLabel: string, transactionHistory: string): string {
+function buildSystemPrompt(
+  summary: string,
+  today: string,
+  currentMonthLabel: string,
+  transactionHistory: string,
+  dynamicBreakdown?: string,
+): string {
   return `Você é o Nexo, um assistente financeiro pessoal inteligente, proativo e amigável.
 
 Hoje é dia ${today}. O mês atual é ${currentMonthLabel}.
@@ -22,6 +28,8 @@ Você tem acesso ao resumo financeiro atual do usuário:
 ${summary}
 
 ${transactionHistory}
+
+${dynamicBreakdown ? `Consulta dinâmica solicitada pelo usuário (dados REAIS consultados no banco de dados, use-os com prioridade máxima e não invente outros números):\n${dynamicBreakdown}` : ''}
 
 Sempre responda com JSON válido seguindo este schema exato:
 {
@@ -303,6 +311,73 @@ function cleanJsonResponse(raw: string): string {
     .trim()
 }
 
+const MONTH_NAMES = [
+  'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+]
+
+const FINANCE_QUERY_PATTERN = /(gast|despes|entrad|saída|saida|recebi|recebimento|saldo|total|quanto|investid)/i
+
+function isFinanceQuery(text: string): boolean {
+  return FINANCE_QUERY_PATTERN.test(text)
+}
+
+function detectMonthQuery(text: string): { month: number; year: number } | null {
+  const lower = text.toLowerCase()
+
+  let monthIndex = -1
+  MONTH_NAMES.forEach((name, i) => {
+    if (new RegExp(`\\b${name}\\b`, 'i').test(lower)) {
+      monthIndex = i
+    }
+  })
+
+  const mesMatch = lower.match(/m[eê]s(?: de)? (\d{1,2})/)
+  if (mesMatch) {
+    const m = Number(mesMatch[1])
+    if (m >= 1 && m <= 12) {
+      monthIndex = m - 1
+    }
+  }
+
+  if (monthIndex === -1) return null
+
+  const yearMatch = lower.match(/(20\d{2}|19\d{2})/)
+  let year = yearMatch ? Number(yearMatch[1]) : new Date().getFullYear()
+
+  if (lower.includes('ano passado')) {
+    year = new Date().getFullYear() - 1
+  }
+
+  return { month: monthIndex, year }
+}
+
+function buildMonthBreakdown(rows: SpentObject[], month: number, year: number): string {
+  const expenses = rows.filter((t) => t.type === 'Saída')
+  const incomes = rows.filter((t) => t.type === 'Entrada')
+
+  const byCategory = expenses.reduce<Record<string, number>>((acc, t) => {
+    acc[t.category] = (acc[t.category] || 0) + t.value
+    return acc
+  }, {})
+
+  const totalIncome = incomes.reduce((sum, t) => sum + t.value, 0)
+  const totalExpenses = expenses.reduce((sum, t) => sum + t.value, 0)
+
+  const categoryLines =
+    Object.entries(byCategory).length > 0
+      ? Object.entries(byCategory)
+          .map(([category, value]) => `- ${category}: R$ ${value.toFixed(2)}`)
+          .join('\n')
+      : '- Nenhuma despesa registrada.'
+
+  return `Mês de ${MONTH_NAMES[month]} de ${year}:
+${categoryLines}
+Total de Saídas: R$ ${totalExpenses.toFixed(2)}
+Total de Entradas: R$ ${totalIncome.toFixed(2)}
+Saldo: R$ ${(totalIncome - totalExpenses).toFixed(2)}`
+}
+
 function parseBrDate(dateStr: string): Date | null {
   const parts = dateStr.split('/')
   if (parts.length !== 3) return null
@@ -410,7 +485,21 @@ Saldo Atual: R$ ${balance.toFixed(2)}`
   console.log('Financial summary injected:', summary)
   console.log('Transaction history:', transactionHistory)
 
-  const systemPrompt = buildSystemPrompt(summary, today, currentMonthLabel, transactionHistory)
+  const monthQuery = detectMonthQuery(lastMessage)
+  const dynamicBreakdown = monthQuery && isFinanceQuery(lastMessage)
+    ? buildMonthBreakdown(
+        transactions.filter((t) => {
+          const date = parseBrDate(t.date)
+          return date ? date.getMonth() === monthQuery.month && date.getFullYear() === monthQuery.year : false
+        }),
+        monthQuery.month,
+        monthQuery.year,
+      )
+    : undefined
+
+  console.log('Dynamic breakdown:', dynamicBreakdown || 'nenhum')
+
+  const systemPrompt = buildSystemPrompt(summary, today, currentMonthLabel, transactionHistory, dynamicBreakdown)
 
   try {
     if (provider === 'groq') {
